@@ -88,7 +88,7 @@ crate fn make_knock(peer: Option<&str>) -> Vec<u8> {
     trace!("Calculating knock value {:?}", peer);
     let mut salt = [0u8; 8];
     ::transportation::RNG.fill(&mut salt).unwrap();
-    make_knock_internal(peer, salt, 0, 0)
+    make_knock_internal(peer, salt, timebytes())
 }
 
 crate fn verify_knock(peer: Option<&str>, knock: &[u8]) -> bool {
@@ -97,17 +97,20 @@ crate fn verify_knock(peer: Option<&str>, knock: &[u8]) -> bool {
     }
     let mut salt: [u8; 8] = [0; 8];
     salt.copy_from_slice(&knock[100..108]);
-    let c = make_knock_internal(peer, salt, 0, KNOCK_ROTATION_TIME);
-    let a = make_knock_internal(peer, salt, 0, 0);
-    let b = make_knock_internal(peer, salt, KNOCK_ROTATION_TIME, 0);
+    let timebytes = timebytes();
+    let c = make_knock_internal(peer, salt, timebytes + KNOCK_ROTATION_TIME);
+    let a = make_knock_internal(peer, salt, timebytes);
+    let b = make_knock_internal(peer, salt, timebytes - KNOCK_ROTATION_TIME);
     knock == &a[..] || knock == &b[..] || knock == &c[..] // TODO, SECURITY: This should be done in constant time
 }
 
-fn make_knock_internal(peer: Option<&str>, salt: [u8; 8], plus: u64, minus: u64) -> Vec<u8> {
+fn timebytes() -> u64 {
     let mut timebytes = UNIX_EPOCH.elapsed().unwrap().as_secs();
     timebytes = timebytes - (timebytes % KNOCK_ROTATION_TIME);
-    timebytes += plus;
-    timebytes -= minus;
+    timebytes
+}
+
+fn make_knock_internal(peer: Option<&str>, salt: [u8; 8], timebytes: u64) -> Vec<u8> {
     let mut result = Vec::with_capacity(100);
     result.resize(100, 0u8);
     debug!("Knock timestamp: {}", timebytes);
