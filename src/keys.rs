@@ -16,6 +16,7 @@ use parking_lot::Mutex;
 
 lazy_static! {
     static ref IDENTITY_BYTES: Vec<u8> = identity_bytes_initializer();
+    static ref KNOCK_VALUES: Mutex<Vec<(u64, Option<String>, Vec<u8>)>> = Mutex::new(Vec::new());
     static ref USED_SALTS: Mutex<Vec<([u8; 8], u64)>> = Mutex::new(Vec::new());
 }
 
@@ -123,6 +124,14 @@ fn timebytes() -> u64 {
 }
 
 fn make_knock_internal(peer: Option<&str>, salt: [u8; 8], timebytes: u64) -> Vec<u8> {
+    if let Some(x) = KNOCK_VALUES
+        .lock()
+        .iter()
+        .filter(|x| x.0 == timebytes && x.1 == peer.map(|x| x.to_string()))
+        .next()
+    {
+        return x.2.clone();
+    }
     let mut result = Vec::with_capacity(100);
     result.resize(100, 0u8);
     debug!("Knock timestamp: {}", timebytes);
@@ -132,6 +141,10 @@ fn make_knock_internal(peer: Option<&str>, salt: [u8; 8], timebytes: u64) -> Vec
     trace!("Using knock_data: {:?}", input);
     input.extend(&timebytes2);
     ring::pbkdf2::derive(&ring::digest::SHA512, 1024, &salt, &input[..], &mut result[..]);
+    KNOCK_VALUES.lock().push((timebytes, peer.map(|x| x.to_string()), result.clone()));
+    if KNOCK_VALUES.lock().len() > 100 {
+        KNOCK_VALUES.lock().remove(0);
+    }
     result.extend_from_slice(&salt);
     result
 }
