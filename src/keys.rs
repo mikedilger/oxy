@@ -12,8 +12,11 @@ use transportation::{
     EncryptionPerspective::Alice,
 };
 
+use parking_lot::Mutex;
+
 lazy_static! {
     static ref IDENTITY_BYTES: Vec<u8> = identity_bytes_initializer();
+    static ref USED_SALTS: Mutex<Vec<([u8; 8], u64)>> = Mutex::new(Vec::new());
 }
 
 const KNOCK_ROTATION_TIME: u64 = 60;
@@ -97,11 +100,20 @@ crate fn verify_knock(peer: Option<&str>, knock: &[u8]) -> bool {
     }
     let mut salt: [u8; 8] = [0; 8];
     salt.copy_from_slice(&knock[100..108]);
+    if USED_SALTS.lock().iter().any(|x| x.0 == salt) {
+        return false;
+    }
     let timebytes = timebytes();
     let c = make_knock_internal(peer, salt, timebytes + KNOCK_ROTATION_TIME);
     let a = make_knock_internal(peer, salt, timebytes);
     let b = make_knock_internal(peer, salt, timebytes - KNOCK_ROTATION_TIME);
-    knock == &a[..] || knock == &b[..] || knock == &c[..] // TODO, SECURITY: This should be done in constant time
+    // TODO, SECURITY: This should be done in constant time
+    if knock == &a[..] || knock == &b[..] || knock == &c[..] {
+        USED_SALTS.lock().retain(|&u| u.1 > timebytes - 120); // clear expired salts
+        true
+    } else {
+        false
+    }
 }
 
 fn timebytes() -> u64 {
