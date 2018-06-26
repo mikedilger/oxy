@@ -89,17 +89,24 @@ crate fn knock_data(peer: Option<&str>) -> Vec<u8> {
 
 crate fn make_knock(peer: Option<&str>) -> Vec<u8> {
     trace!("Calculating knock value {:?}", peer);
-    make_knock_internal(peer, 0, 0)
+    let mut salt = [0u8; 8];
+    ::transportation::RNG.fill(&mut salt).unwrap();
+    make_knock_internal(peer, salt, 0, 0)
 }
 
 crate fn verify_knock(peer: Option<&str>, knock: &[u8]) -> bool {
-    let c = make_knock_internal(peer, 0, KNOCK_ROTATION_TIME);
-    let a = make_knock_internal(peer, 0, 0);
-    let b = make_knock_internal(peer, KNOCK_ROTATION_TIME, 0);
+    if knock.len() < 108 {
+        return false;
+    }
+    let mut salt: [u8; 8] = [0; 8];
+    salt.copy_from_slice(&knock[100..108]);
+    let c = make_knock_internal(peer, salt, 0, KNOCK_ROTATION_TIME);
+    let a = make_knock_internal(peer, salt, 0, 0);
+    let b = make_knock_internal(peer, salt, KNOCK_ROTATION_TIME, 0);
     knock == &a[..] || knock == &b[..] || knock == &c[..] // TODO, SECURITY: This should be done in constant time
 }
 
-fn make_knock_internal(peer: Option<&str>, plus: u64, minus: u64) -> Vec<u8> {
+fn make_knock_internal(peer: Option<&str>, salt: [u8; 8], plus: u64, minus: u64) -> Vec<u8> {
     let mut timebytes = UNIX_EPOCH.elapsed().unwrap().as_secs();
     timebytes = timebytes - (timebytes % KNOCK_ROTATION_TIME);
     timebytes += plus;
@@ -120,11 +127,12 @@ fn make_knock_internal(peer: Option<&str>, plus: u64, minus: u64) -> Vec<u8> {
     let mut input = knock_data(peer).to_vec();
     trace!("Using knock_data: {:?}", input);
     input.extend(&timebytes2);
-    ring::pbkdf2::derive(&ring::digest::SHA512, 1024, b"timeknock", &input[..], &mut result[..]);
+    ring::pbkdf2::derive(&ring::digest::SHA512, 1024, &salt, &input[..], &mut result[..]);
     KNOCK_VALUES.lock().push((timebytes, peer.map(|x| x.to_string()), result.clone()));
     if KNOCK_VALUES.lock().len() > 100 {
         KNOCK_VALUES.lock().remove(0);
     }
+    result.extend_from_slice(&salt);
     result
 }
 
